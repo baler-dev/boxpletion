@@ -67,3 +67,16 @@ test("moduleExports falls back without tags", () => {
 test("moduleExports falls back when a tag exports nothing", () => {
     deepStrictEqual(moduleExports("#' @export\nlibrary(x)\ny = 1"), ["y"])
 })
+
+test("box::export names win over tags", () => {
+    const source = "box::export(a, b)\n#' @export\nc = 1\na = 1\nb = 2"
+    deepStrictEqual(moduleExports(source), ["a", "b"])
+})
+
+test("an empty box::export() means no exports", () => {
+    deepStrictEqual(moduleExports("box::export()\na = 1"), [])
+})
+
+test("several box::export calls are combined", () => {
+    deepStrictEqual(moduleExports("box::export(a)\nbox::export(b)\na = 1"), ["a", "b"])
+})

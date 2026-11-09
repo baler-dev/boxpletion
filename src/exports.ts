@@ -23,6 +23,23 @@ export function exportedNames(source: string): string[] {
     return names
 }
 
+const exportCall = /box::export\(([^)]*)\)/g
+
+function declaredExports(source: string): string[] | null {
+    let found = false
+    const names = new Set<string>()
+    for (const call of source.matchAll(exportCall)) {
+        found = true
+        for (const part of call[1].split(",")) {
+            const name = part.trim()
+            if (name !== "") {
+                names.add(name)
+            }
+        }
+    }
+    return found ? [...names] : null
+}
+
 export function topLevelNames(source: string): string[] {
     const names = new Set<string>()
     for (const line of source.split(/\r?\n/)) {
@@ -36,6 +53,10 @@ export function topLevelNames(source: string): string[] {
 }
 
 export function moduleExports(source: string): string[] {
+    const declared = declaredExports(source)
+    if (declared !== null) {
+        return declared
+    }
     const tagged = exportedNames(source)
     return tagged.length > 0 ? tagged : topLevelNames(source)
 }
