@@ -9,7 +9,9 @@ export function exportedNames(source: string): string[] {
             tagged = true
             continue
         }
-        if (line.trim() === "" || line.startsWith("#")) {
+
+        const trimmed = line.trim()
+        if (trimmed === "" || trimmed.startsWith("#")) {
             continue
         }
         const match = assignment.exec(line)
