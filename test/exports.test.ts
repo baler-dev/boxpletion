@@ -88,3 +88,43 @@ test("a commented-out box::export is ignored", () => {
 test("backticked names lose their backticks", () => {
     deepStrictEqual(moduleExports("box::export(`my name`)\n`my name` = 1"), ["my name"])
 })
+
+test("a tagged box::use re-exports attached names and module names", () => {
+    const source = [
+        "#' @export",
+        "box::use(",
+        "    ./root_find[brentq],",
+        "    ./quad[quad],",
+        "    ./spline,",
+        ")",
+    ].join("\n")
+    deepStrictEqual(moduleExports(source), ["brentq", "quad", "spline"])
+})
+
+test("an explicit alias exports the alias as well as the attached names", () => {
+    const source = "#' @export\nbox::use(cv = ./quad[quad])"
+    deepStrictEqual(moduleExports(source), ["quad", "cv"])
+})
+
+test("an alias inside the attach list is the exported name", () => {
+    const source = "#' @export\nbox::use(./a[x = y, z])"
+    deepStrictEqual(moduleExports(source), ["x", "z"])
+})
+
+test("names from an untagged box::use are not exported", () => {
+    deepStrictEqual(moduleExports("box::use(./a[x])\nf = 1"), ["f"])
+})
+
+test("the wildcard is skipped but other names are kept", () => {
+    deepStrictEqual(moduleExports("#' @export\nbox::use(./a[x, ...])"), ["x"])
+})
+
+test("comments and trailing commas inside a tagged box::use are ignored", () => {
+    const source = "#' @export\nbox::use(\n    ./a[x], # note (with paren\n    ./b,\n)"
+    deepStrictEqual(moduleExports(source), ["x", "b"])
+})
+
+test("tagged assignments and tagged box::use keep source order", () => {
+    const source = "#' @export\nf = 1\n#' @export\nbox::use(./a[x])"
+    deepStrictEqual(moduleExports(source), ["f", "x"])
+})
