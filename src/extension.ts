@@ -1,26 +1,57 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import * as vscode from 'vscode';
+import * as vscode from "vscode"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
+import { hintsAt, type Hint } from "./hints"
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
-
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "boxpletion" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('boxpletion.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from boxpletion!');
-	});
-
-	context.subscriptions.push(disposable);
+const itemKinds: Record<Hint["kind"], vscode.CompletionItemKind> = {
+    module: vscode.CompletionItemKind.Module,
+    folder: vscode.CompletionItemKind.Folder,
+    name: vscode.CompletionItemKind.Variable,
+    wildcard: vscode.CompletionItemKind.Keyword,
 }
 
-// This method is called when your extension is deactivated
+const plainName = /^[A-Za-z.][A-Za-z0-9._]*$/
+
+export function activate(context: vscode.ExtensionContext) {
+    const provider = vscode.languages.registerCompletionItemProvider(
+        { language: "r" },
+        {
+            provideCompletionItems(document, position) {
+                const before = document.getText(
+                    new vscode.Range(new vscode.Position(0, 0), position)
+                )
+                const currentDir =
+                    document.uri.scheme === "file"
+                        ? dirname(document.uri.fsPath)
+                        : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir())
+                const roots = {
+                    currentDir,
+                    balerDir: join(homedir(), ".baler", "modules"),
+                }
+                return hintsAt(before, roots).map((hint) => {
+                    const item = new vscode.CompletionItem(hint.label, itemKinds[hint.kind])
+                    item.sortText = hint.kind === "wildcard" ? "zzz" : hint.label
+                    if (hint.kind === "name" && !plainName.test(hint.label)) {
+                        item.insertText = "`" + hint.label + "`"
+                        item.filterText = hint.label
+                    }
+                    if (hint.kind === "folder") {
+                        item.insertText = hint.label + "/"
+                        item.command = {
+                            command: "editor.action.triggerSuggest",
+                            title: "Suggest",
+                        }
+                    }
+                    return item
+                })
+            },
+        },
+        "[",
+        ",",
+        "/",
+        "("
+    )
+    context.subscriptions.push(provider)
+}
+
 export function deactivate() {}
