@@ -80,3 +80,11 @@ test("an empty box::export() means no exports", () => {
 test("several box::export calls are combined", () => {
     deepStrictEqual(moduleExports("box::export(a)\nbox::export(b)\na = 1"), ["a", "b"])
 })
+
+test("a commented-out box::export is ignored", () => {
+    deepStrictEqual(moduleExports("# box::export(a)\nb = 1"), ["b"])
+})
+
+test("backticked names lose their backticks", () => {
+    deepStrictEqual(moduleExports("box::export(`my name`)\n`my name` = 1"), ["my name"])
+})

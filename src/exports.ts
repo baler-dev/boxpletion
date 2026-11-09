@@ -26,12 +26,19 @@ export function exportedNames(source: string): string[] {
 const exportCall = /box::export\(([^)]*)\)/g
 
 function declaredExports(source: string): string[] | null {
+    const code = source
+        .split(/\r?\n/)
+        .filter((line) => !line.trim().startsWith("#"))
+        .join("\n")
     let found = false
     const names = new Set<string>()
-    for (const call of source.matchAll(exportCall)) {
+    for (const call of code.matchAll(exportCall)) {
         found = true
         for (const part of call[1].split(",")) {
-            const name = part.trim()
+            let name = part.trim()
+            if (name.length > 1 && name.startsWith("`") && name.endsWith("`")) {
+                name = name.slice(1, -1)
+            }
             if (name !== "") {
                 names.add(name)
             }
