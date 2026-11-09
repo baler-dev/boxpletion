@@ -89,3 +89,8 @@ test("listModules lists a name once when a file and a folder share it", (t) => {
 test("listModules gives an empty list for a missing folder", () => {
     deepStrictEqual(listModules(join(tmpdir(), "boxpletion-does-not-exist")), [])
 })
+
+test("listModules skips dist-info metadata folders", (t) => {
+    const root = makeTree(t, ["rcalc/__init__.r", "rcalc-0.1.0.dist-info/METADATA"])
+    deepStrictEqual(listModules(root), [{ name: "rcalc", kind: "module" }])
+})

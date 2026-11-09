@@ -35,7 +35,7 @@ export function listModules(dir: string): ModuleEntry[] {
     }
     const entries = new Map<string, ModuleEntry>()
     for (const item of readdirSync(dir, { withFileTypes: true })) {
-        if (item.name.startsWith(".")) {
+        if (item.name.startsWith(".") || item.name.endsWith(".dist-info")) {
             continue
         }
         if (item.isFile()) {
