@@ -13,6 +13,18 @@
     "onLanguage:r"
   ],
   "main": "./out/src/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "boxpletion",
+      "properties": {
+        "boxpletion.rscriptPath": {
+          "type": "string",
+          "default": "Rscript",
+          "description": "Path to the Rscript executable used to find installed package libraries."
+        }
+      }
+    }
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
