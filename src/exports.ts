@@ -22,3 +22,20 @@ export function exportedNames(source: string): string[] {
     }
     return names
 }
+
+export function topLevelNames(source: string): string[] {
+    const names = new Set<string>()
+    for (const line of source.split(/\r?\n/)) {
+        const match = assignment.exec(line)
+        if (match === null || match[2] === "<<-" || match[1].startsWith(".")) {
+            continue
+        }
+        names.add(match[1])
+    }
+    return [...names]
+}
+
+export function moduleExports(source: string): string[] {
+    const tagged = exportedNames(source)
+    return tagged.length > 0 ? tagged : topLevelNames(source)
+}

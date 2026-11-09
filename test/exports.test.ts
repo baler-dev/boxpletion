@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { deepStrictEqual } from "node:assert"
-import { exportedNames } from "../src/exports"
+import { exportedNames, moduleExports, topLevelNames } from "../src/exports"
 
 test("a blank line and a comment keep the tag", () => {
     const source = "#' @export\n\n# helper\nf = 1"
@@ -40,4 +40,30 @@ test("a tag before library() exports nothing", () => {
 test("an indented comment keeps the tag", () => {
     const source = "#' @export\n    # note\nf = 1"
     deepStrictEqual(exportedNames(source), ["f"])
+})
+
+test("topLevelNames lists each name once, in order", () => {
+    const source = "add = 1\npi_ish <- 3.14\nadd = 2"
+    deepStrictEqual(topLevelNames(source), ["add", "pi_ish"])
+})
+
+test("topLevelNames skips dot names, indented code and comparisons", () => {
+    const source = ".hidden = 1\nf = function() {\n    inner = 2\n}\nx == 1"
+    deepStrictEqual(topLevelNames(source), ["f"])
+})
+
+test("topLevelNames skips <<- assignments", () => {
+    deepStrictEqual(topLevelNames("x <<- 1\ny = 2"), ["y"])
+})
+
+test("moduleExports prefers tags", () => {
+    deepStrictEqual(moduleExports("#' @export\nadd = 1\nhelper = 2"), ["add"])
+})
+
+test("moduleExports falls back without tags", () => {
+    deepStrictEqual(moduleExports("a = 1\nb = 2"), ["a", "b"])
+})
+
+test("moduleExports falls back when a tag exports nothing", () => {
+    deepStrictEqual(moduleExports("#' @export\nlibrary(x)\ny = 1"), ["y"])
 })
