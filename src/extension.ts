@@ -69,6 +69,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 return hintsAt(before, roots).map((hint) => {
                     const item = new vscode.CompletionItem(hint.label, itemKinds[hint.kind])
+                    item.detail = hint.detail
                     item.sortText = hint.kind === "wildcard" ? "zzz" : hint.label
                     if (hint.kind === "name" && !plainName.test(hint.label)) {
                         item.insertText = "`" + hint.label + "`"
@@ -88,7 +89,8 @@ export function activate(context: vscode.ExtensionContext) {
         "[",
         ",",
         "/",
-        "("
+        "(",
+        "$"
     )
     context.subscriptions.push(provider)
 }
