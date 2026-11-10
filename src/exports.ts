@@ -4,7 +4,7 @@ const exportCall = /box::export\(([^)]*)\)/g
 const aliasPrefix = /^([A-Za-z0-9._`]+)\s*=\s*/
 const useStart = "box::use("
 
-function stripBackticks(name: string): string {
+export function stripBackticks(name: string): string {
     if (name.length > 1 && name.startsWith("`") && name.endsWith("`")) {
         return name.slice(1, -1)
     }
