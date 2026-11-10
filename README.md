@@ -48,11 +48,11 @@ It has not published into Marketplace listings, yet. Until then, in order to use
 2. In Positron or VS Code, press Ctrl+Shift+P (Cmd+Shift+P on a Mac) and run **Extensions: Install from VSIX...**
 3. Select the downloaded file, and reload the window when it asks.
 
-For traditional R packages, one obviously needs an [R interpreter](https://cran.r-project.org/bin/windows/base/old/) installed, then find the path where the installed interpreter is located, get the path where the binary `bin/` is installed, where `Rscript` is lived and place them to PATH, because it's run once to find your R library folders. Otherwise, if it isn't there, set `boxpletion.rscriptPath` in your user settings to its full path.
+Note: In order for this extension works for traditional R packages, one must need an [R interpreter](https://cran.r-project.org/bin/windows/base/old/) installed, then find the path where the installed interpreter is located, get the path where the binary `bin/` is installed, where `Rscript` is lived and place them to PATH, because it's run once to find your R library folders. Otherwise, if it isn't there, set `boxpletion.rscriptPath` in your user settings to its full path.
 
 ## Settings
 
-- `boxpletion.rscriptPath`: path to `Rscript`, used once to find your R library folders. Default: `Rscript`.
+As of now, only 1 setting is needed to be set on VS Code/Positron's settings, namely `boxpletion.rscriptPath`: path to `Rscript`, used once to find your R library folders. Default: `Rscript`.
 
 ## License
 
