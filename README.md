@@ -1,5 +1,7 @@
 # boxpletion
 
+[![CI](https://img.shields.io/github/actions/workflow/status/baler-dev/boxpletion/ci.yml?branch=main&label=CI)](https://github.com/baler-dev/boxpletion/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/baler-dev/boxpletion)](https://github.com/baler-dev/boxpletion/releases) [![License: MIT](https://img.shields.io/github/license/baler-dev/boxpletion)](LICENSE)
+
 This is an extension for type and autocompletion hints for declaring `box::use()` imports, for Positron and VS Code. It only comes with reading files, not to load or run the modules you want to import.
 
 ## Overview
