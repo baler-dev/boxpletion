@@ -18,15 +18,25 @@ The GIFs below show the three main cases:
 
     a. CRAN-style R packages  
 
+        ![](assets/r-packs.gif)
+
     b. `box-bale` modules  
+
+        ![](assets/box-bale-packs.gif)
 
 2.  Navigating modules / submodules after `/`
 
     a. Local modules  
 
-    b. Global `box-bale` modules  
+        ![](assets/local-submods.gif) 
+
+    b. Global `box-bale` modules 
+
+        ![](assets/box-bale-submods.gif) 
 
 3.  Attaching exported names inside `[]`
+
+    ![](assets/attach-names.gif)
 
 ## Install
 

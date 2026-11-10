@@ -11,3 +11,4 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 out/test/**
 test-workspace/**
+assets/**
