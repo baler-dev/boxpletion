@@ -4,7 +4,7 @@ All notable changes to the "boxpletion" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.2.0]
+## v0.2.0
 
 ### What's new
 
@@ -20,6 +20,6 @@ In general, names you import with `box::use()` now complete where you use them, 
 
 -  Names that are aliases of functions, or built with `new_class()`, `new_generic()`, `setClass()`, `Vectorize()`, `Negate()`, `partial()` or `compose()`, are treated as functions.
 
-## [0.1.0]
+## v0.1.0
 
 - Initial release
