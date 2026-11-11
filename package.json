@@ -2,7 +2,7 @@
   "name": "boxpletion",
   "displayName": "boxpletion",
   "description": "Type hinting and autocomplete hints for box::use import declaration",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.138.0"
   },
