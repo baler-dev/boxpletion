@@ -104,3 +104,82 @@ test("only installed packages without a baler module need a data index", (t) => 
     deepStrictEqual(packagesNeeded("box::use(dplyr[", roots), ["dplyr"])
     deepStrictEqual(packagesNeeded("x = 1", roots), [])
 })
+
+const barModule = "#' @export\nrun = function() 1\n#' @export\nval = 2"
+const fooInit = "#' @export\nbox::use(\n    ./bar\n)\n"
+
+function withFolderModule(t: Parameters<typeof makeTree>[0]) {
+    const files = { "foo/__init__.r": fooInit, "foo/bar.r": barModule }
+    return { balerDir: makeTree(t, files), currentDir: makeTree(t, files) }
+}
+
+function summary(hints: { label: string; kind: string; call?: boolean }[]) {
+    return hints.map((hint) => [hint.label, hint.kind, hint.call === true])
+}
+
+test("an attached re-exported module is a namespace, not a call", (t) => {
+    const hints = hintsAt("box::use(./foo[bar])\nba", withFolderModule(t))
+    deepStrictEqual(summary(hints), [["bar", "namespace", false]])
+})
+
+test("an attached re-exported module completes its own exports", (t) => {
+    const hints = hintsAt("box::use(./foo[bar])\nbar$", withFolderModule(t))
+    deepStrictEqual(summary(hints), [
+        ["run", "function", true],
+        ["val", "name", false],
+    ])
+})
+
+test("a module reached through a chain completes its exports", (t) => {
+    const roots = withFolderModule(t)
+    const expected = [
+        ["run", "function", true],
+        ["val", "name", false],
+    ]
+    deepStrictEqual(summary(hintsAt("box::use(./foo)\nfoo$bar$", roots)), expected)
+    deepStrictEqual(summary(hintsAt("box::use(f = ./foo)\nf$bar$", roots)), expected)
+    deepStrictEqual(summary(hintsAt("box::use(./foo)\nfoo$nope$", roots)), [])
+})
+
+test("box-bale modules re-export modules the same way", (t) => {
+    const roots = withFolderModule(t)
+    deepStrictEqual(summary(hintsAt("box::use(foo[bar])\nba", roots)), [["bar", "namespace", false]])
+    deepStrictEqual(summary(hintsAt("box::use(foo[bar])\nbar$", roots)), [
+        ["run", "function", true],
+        ["val", "name", false],
+    ])
+})
+
+test("the brackets mark a re-exported module as a namespace", (t) => {
+    const hints = hintsAt("box::use(./foo[", withFolderModule(t))
+    deepStrictEqual(summary(hints), [
+        ["bar", "namespace", false],
+        ["...", "wildcard", false],
+    ])
+})
+
+test("a re-exported function keeps its kind from the module that defines it", (t) => {
+    const roots = {
+        balerDir: makeTree(t, {}),
+        currentDir: makeTree(t, {
+            "foo/__init__.r": "#' @export\nbox::use(./bar[run, val])",
+            "foo/bar.r": barModule,
+        }),
+    }
+    deepStrictEqual(summary(hintsAt("box::use(./foo[run, val])\nr", roots)), [
+        ["run", "function", true],
+        ["val", "name", false],
+    ])
+})
+
+test("modules that re-export each other do not loop", (t) => {
+    const roots = {
+        balerDir: makeTree(t, {}),
+        currentDir: makeTree(t, {
+            "a.r": "#' @export\nbox::use(./b[x])",
+            "b.r": "#' @export\nbox::use(./a[x])",
+        }),
+    }
+    deepStrictEqual(summary(hintsAt("box::use(./a[x])\nx", roots)), [["x", "name", false]])
+    deepStrictEqual(hintsAt("box::use(./a[x])\nx$", roots), [])
+})

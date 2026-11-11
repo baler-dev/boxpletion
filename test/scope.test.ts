@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { deepStrictEqual } from "node:assert"
-import { moduleBinding, scanUseCalls } from "../src/scope"
+import { moduleBinding, moduleReexports, scanUseCalls } from "../src/scope"
 
 function bound(text: string): (string | null)[] {
     return scanUseCalls(text).imports.map(moduleBinding)
@@ -34,4 +34,20 @@ test("comments and strings do not confuse the scan", () => {
 
 test("an unclosed call is reported as open", () => {
     deepStrictEqual(scanUseCalls("box::use(a,\n").open, true)
+})
+
+test("moduleReexports lists tagged modules and attached names only", () => {
+    const source = [
+        "#' @export",
+        "box::use(",
+        "    ./bar,",
+        "    ./baz[run, go = start],",
+        ")",
+        "box::use(./hidden)",
+    ].join("\n")
+    deepStrictEqual([...moduleReexports(source).values()], [
+        { name: "bar", segments: [".", "bar"], source: null },
+        { name: "run", segments: [".", "baz"], source: "run" },
+        { name: "go", segments: [".", "baz"], source: "start" },
+    ])
 })

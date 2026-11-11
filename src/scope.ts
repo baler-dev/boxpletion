@@ -181,6 +181,22 @@ function parseEntry(raw: string): UseImport | null {
     return { alias, segments, attached, wildcard, lazy }
 }
 
+function readCall(text: string, at: number): { imports: UseImport[]; end: number } | null {
+    const start = at + useCall.length
+    const end = callEnd(text, start)
+    if (end === -1) {
+        return null
+    }
+    const imports: UseImport[] = []
+    for (const raw of splitArgs(text.slice(start, end))) {
+        const entry = parseEntry(raw)
+        if (entry !== null) {
+            imports.push(entry)
+        }
+    }
+    return { imports, end }
+}
+
 /**
  * Collects every complete `box::use()` call in `text`. `open` is true when the last
  * call is still unclosed, which means the cursor is inside it.
@@ -198,17 +214,12 @@ export function scanUseCalls(text: string): UseScan {
         if (inCommentOrString(text.slice(lineStart, at))) {
             continue
         }
-        const end = callEnd(text, from)
-        if (end === -1) {
+        const call = readCall(text, at)
+        if (call === null) {
             return { imports, open: true }
         }
-        for (const raw of splitArgs(text.slice(from, end))) {
-            const entry = parseEntry(raw)
-            if (entry !== null) {
-                imports.push(entry)
-            }
-        }
-        from = end + 1
+        imports.push(...call.imports)
+        from = call.end + 1
     }
 }
 
@@ -219,4 +230,50 @@ export function moduleBinding(entry: UseImport): string | null {
     }
     const name = entry.alias ?? entry.segments[entry.segments.length - 1]
     return name === "" || name === "." || name === ".." ? null : name
+}
+
+export interface Reexport {
+    name: string
+    segments: string[]
+    /** The name inside the imported module, or null when the module itself is re-exported. */
+    source: string | null
+}
+
+const exportTag = /^#'\s*@export(\s|$)/
+
+/** What a module re-exports through a tagged `box::use()`, keyed by the exported name. */
+export function moduleReexports(source: string): Map<string, Reexport> {
+    const found = new Map<string, Reexport>()
+    let tagged = false
+    let offset = 0
+    for (const raw of source.split("\n")) {
+        const line = raw.replace(/\r$/, "")
+        const lineStart = offset
+        offset += raw.length + 1
+        if (exportTag.test(line)) {
+            tagged = true
+            continue
+        }
+        const trimmed = line.trim()
+        if (trimmed === "" || trimmed.startsWith("#")) {
+            continue
+        }
+        if (tagged && line.startsWith(useCall)) {
+            for (const entry of readCall(source, lineStart)?.imports ?? []) {
+                const module = moduleBinding(entry)
+                if (module !== null) {
+                    found.set(module, { name: module, segments: entry.segments, source: null })
+                }
+                for (const attached of entry.attached ?? []) {
+                    found.set(attached.name, {
+                        name: attached.name,
+                        segments: entry.segments,
+                        source: attached.source,
+                    })
+                }
+            }
+        }
+        tagged = false
+    }
+    return found
 }

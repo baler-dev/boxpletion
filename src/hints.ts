@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { findHintContext, type HintContext } from "./context"
 import { functionNames, moduleExports, stripBackticks } from "./exports"
 import { findPackageDir, listPackages, packageExports } from "./packages"
@@ -7,11 +7,19 @@ import { findModuleFile, listModules } from "./resolve"
 import {
     inCommentOrString,
     moduleBinding,
+    moduleReexports,
     scanUseCalls,
     type UseImport,
 } from "./scope"
 
-export type HintKind = "module" | "folder" | "name" | "function" | "data" | "wildcard"
+export type HintKind =
+    | "module"
+    | "folder"
+    | "name"
+    | "function"
+    | "data"
+    | "namespace"
+    | "wildcard"
 
 export interface Hint {
     label: string
@@ -27,17 +35,40 @@ export interface HintRoots {
     data?: Record<string, string[]>
 }
 
-const memberAccess = /(?<![A-Za-z0-9._$@:`])(`[^`]+`|[A-Za-z.][A-Za-z0-9._]*)\$[A-Za-z0-9._]*$/
+const identifier = "(?:`[^`]+`|[A-Za-z.][A-Za-z0-9._]*)"
+const memberAccess = new RegExp(
+    "(?<![A-Za-z0-9._$@:`])(" + identifier + "(?:\\$" + identifier + ")*)\\$[A-Za-z0-9._]*$"
+)
+const identifierParts = new RegExp(identifier, "g")
 const identifierAt = /(?<![A-Za-z0-9._$@:`])[A-Za-z.][A-Za-z0-9._]*$/
+
+type NameKind = "function" | "data" | "namespace" | "name"
+
+interface Target {
+    segments: string[]
+    dir?: string
+}
 
 interface ModuleNames {
     names: string[]
-    kindOf: (name: string) => "function" | "data" | "name"
+    kindOf: (name: string) => NameKind
+    /** Where an exported name that is itself a module lives, if it is one. */
+    submodule: (name: string) => Target | null
 }
 
-function exportsOf(segments: string[], roots: HintRoots): ModuleNames | null {
+const maxDepth = 8
+
+function exportsOf(
+    segments: string[],
+    roots: HintRoots,
+    dir?: string,
+    depth = 0
+): ModuleNames | null {
+    if (depth > maxDepth) {
+        return null
+    }
     const local = segments[0] === "." || segments[0] === ".."
-    const base = local ? roots.currentDir : roots.balerDir
+    const base = local ? (dir ?? roots.currentDir) : roots.balerDir
     const last = segments[segments.length - 1]
     const target = last === "." || last === ".." ? [...segments, "__init__"] : segments
     const file = findModuleFile([base], target)
@@ -45,9 +76,38 @@ function exportsOf(segments: string[], roots: HintRoots): ModuleNames | null {
         try {
             const text = readFileSync(file, "utf8")
             const functions = functionNames(text)
+            const reexports = moduleReexports(text)
+            const here = dirname(file)
+            const follow = (name: string) => {
+                const reexport = reexports.get(name)
+                if (reexport === undefined) {
+                    return null
+                }
+                const from = exportsOf(reexport.segments, roots, here, depth + 1)
+                return { reexport, from }
+            }
             return {
                 names: moduleExports(text),
-                kindOf: (name) => (functions.has(name) ? "function" : "name"),
+                kindOf: (name) => {
+                    const followed = follow(name)
+                    if (followed === null) {
+                        return functions.has(name) ? "function" : "name"
+                    }
+                    if (followed.reexport.source === null) {
+                        return "namespace"
+                    }
+                    return followed.from?.kindOf(followed.reexport.source) ?? "name"
+                },
+                submodule: (name) => {
+                    const followed = follow(name)
+                    if (followed === null) {
+                        return null
+                    }
+                    if (followed.reexport.source === null) {
+                        return { segments: followed.reexport.segments, dir: here }
+                    }
+                    return followed.from?.submodule(followed.reexport.source) ?? null
+                },
             }
         } catch {
             return null
@@ -62,12 +122,13 @@ function exportsOf(segments: string[], roots: HintRoots): ModuleNames | null {
     }
     const loaded = roots.data?.[segments[0]]
     if (loaded === undefined) {
-        return { names: info.names, kindOf: () => "name" }
+        return { names: info.names, kindOf: () => "name", submodule: () => null }
     }
     const data = new Set(loaded)
     return {
         names: [...new Set([...info.names, ...loaded])],
         kindOf: (name) => (data.has(name) ? "data" : "function"),
+        submodule: () => null,
     }
 }
 
@@ -97,6 +158,27 @@ function source(entry: UseImport): string {
     return entry.segments.join("/")
 }
 
+/** The module that `name` refers to after the given imports, or null if it is not a module. */
+function bindingTarget(name: string, imports: UseImport[], roots: HintRoots): Target | null {
+    let found: Target | null = null
+    for (const entry of imports) {
+        if (moduleBinding(entry) === name) {
+            found = { segments: entry.segments }
+        }
+        const attaches = (entry.attached?.length ?? 0) > 0 || entry.wildcard
+        const info = attaches ? exportsOf(entry.segments, roots) : null
+        for (const attached of entry.attached ?? []) {
+            if (attached.name === name) {
+                found = info?.submodule(attached.source) ?? null
+            }
+        }
+        if (entry.wildcard && info?.names.includes(name)) {
+            found = info.submodule(name)
+        }
+    }
+    return found
+}
+
 function usable(label: string, from: ModuleNames | null, detail: string, original = label): Hint {
     const kind = from === null ? "name" : from.kindOf(original)
     return kind === "function" ? { label, kind, detail, call: true } : { label, kind, detail }
@@ -116,13 +198,22 @@ function scopeHints(before: string, roots: HintRoots): Hint[] {
         return []
     }
     if (member !== null) {
-        const name = stripBackticks(member[1])
-        const owner = scan.imports.filter((entry) => moduleBinding(entry) === name).pop()
-        if (owner === undefined) {
+        const parts = [...member[1].matchAll(identifierParts)].map((part) =>
+            stripBackticks(part[0])
+        )
+        let target = bindingTarget(parts[0], scan.imports, roots)
+        for (const part of parts.slice(1)) {
+            target =
+                target === null
+                    ? null
+                    : (exportsOf(target.segments, roots, target.dir)?.submodule(part) ?? null)
+        }
+        if (target === null) {
             return []
         }
-        const owned = exportsOf(owner.segments, roots)
-        return (owned?.names ?? []).map((label) => usable(label, owned, source(owner)))
+        const owned = exportsOf(target.segments, roots, target.dir)
+        const detail = target.segments.join("/")
+        return (owned?.names ?? []).map((label) => usable(label, owned, detail))
     }
     const visible = new Map<string, Hint>()
     for (const entry of scan.imports) {

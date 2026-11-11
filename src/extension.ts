@@ -12,11 +12,15 @@ const itemKinds: Record<Hint["kind"], vscode.CompletionItemKind> = {
     name: vscode.CompletionItemKind.Variable,
     function: vscode.CompletionItemKind.Function,
     data: vscode.CompletionItemKind.Constant,
+    namespace: vscode.CompletionItemKind.Module,
     wildcard: vscode.CompletionItemKind.Keyword,
 }
 
 function isName(hint: Hint): boolean {
-    return hint.kind === "name" || hint.kind === "function" || hint.kind === "data"
+    return hint.kind === "name" ||
+        hint.kind === "function" ||
+        hint.kind === "data" ||
+        hint.kind === "namespace"
 }
 
 const plainName = /^[A-Za-z.][A-Za-z0-9._]*$/
