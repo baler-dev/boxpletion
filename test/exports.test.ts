@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { deepStrictEqual } from "node:assert"
-import { exportedNames, moduleExports, topLevelNames } from "../src/exports"
+import { exportedNames, moduleExports, topLevelNames, functionNames } from "../src/exports"
 
 test("a blank line and a comment keep the tag", () => {
     const source = "#' @export\n\n# helper\nf = 1"
@@ -127,4 +127,46 @@ test("comments and trailing commas inside a tagged box::use are ignored", () => 
 test("tagged assignments and tagged box::use keep source order", () => {
     const source = "#' @export\nf = 1\n#' @export\nbox::use(./a[x])"
     deepStrictEqual(moduleExports(source), ["f", "x"])
+})
+
+test("functionNames finds top-level function assignments only", () => {
+    const source = [
+        "add = function(x, y) x + y",
+        "lam <- \\(x) x",
+        "value = 1",
+        "f = function() {",
+        "    inner = function() NULL",
+        "}",
+    ].join("\n")
+    deepStrictEqual([...functionNames(source)], ["add", "lam", "f"])
+})
+
+test("functionNames follows aliases of functions, in any order", () => {
+    const source = [
+        "later = fn1",
+        "fn1 = fn",
+        "fn = function(x) x",
+        "number = 1",
+        "other = number",
+        "x <- fn # trailing comment",
+        "y = fn(2)",
+    ].join("\n")
+    deepStrictEqual([...functionNames(source)].sort(), ["fn", "fn1", "later", "x"])
+})
+
+test("functionNames counts calls that return callables, with or without a prefix", () => {
+    const source = [
+        "Person = S7::new_class('Person', properties = list(name = class_character))",
+        "gen <- new_generic('gen', 'x')",
+        "Shape = methods::setClass('Shape', representation('VIRTUAL'))",
+        "quiet = purrr::partial(print, digits = 2)",
+        "Person2 = Person",
+        "Gen = R6::R6Class('Gen')",
+        "made = make_counter()",
+        "newer = new_classy(1)",
+    ].join("\n")
+    deepStrictEqual(
+        [...functionNames(source)].sort(),
+        ["Person", "Person2", "Shape", "gen", "quiet"]
+    )
 })
