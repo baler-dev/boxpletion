@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { deepStrictEqual } from "node:assert"
-import { exportedNames, moduleExports, topLevelNames } from "../src/exports"
+import { exportedNames, moduleExports, topLevelNames, functionNames } from "../src/exports"
 
 test("a blank line and a comment keep the tag", () => {
     const source = "#' @export\n\n# helper\nf = 1"
@@ -127,4 +127,17 @@ test("comments and trailing commas inside a tagged box::use are ignored", () => 
 test("tagged assignments and tagged box::use keep source order", () => {
     const source = "#' @export\nf = 1\n#' @export\nbox::use(./a[x])"
     deepStrictEqual(moduleExports(source), ["f", "x"])
+})
+
+test("functionNames finds top-level function assignments only", () => {
+    const source = [
+        "add = function(x, y) x + y",
+        "lam <- \\(x) x",
+        "value = 1",
+        "alias = add",
+        "f = function() {",
+        "    inner = function() NULL",
+        "}",
+    ].join("\n")
+    deepStrictEqual([...functionNames(source)], ["add", "lam", "f"])
 })

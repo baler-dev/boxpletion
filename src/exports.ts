@@ -169,3 +169,17 @@ export function moduleExports(source: string): string[] {
     const tagged = exportedNames(source)
     return tagged.length > 0 ? tagged : topLevelNames(source)
 }
+
+const functionAssignment = /^([A-Za-z.][A-Za-z0-9._]*)\s*(?:<<-|<-|:=|=(?!=))\s*(?:function\b|\\\()/
+
+/** Names assigned a function at the top level, such as `add = function(x) x` or `f = \(x) x`. */
+export function functionNames(source: string): Set<string> {
+    const names = new Set<string>()
+    for (const line of source.split(/\r?\n/)) {
+        const match = functionAssignment.exec(line)
+        if (match !== null) {
+            names.add(match[1])
+        }
+    }
+    return names
+}

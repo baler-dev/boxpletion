@@ -1,29 +1,41 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { findHintContext, type HintContext } from "./context"
-import { moduleExports, stripBackticks } from "./exports"
-import { listPackages, packageExports } from "./packages"
+import { functionNames, moduleExports, stripBackticks } from "./exports"
+import { findPackageDir, listPackages, packageExports } from "./packages"
 import { findModuleFile, listModules } from "./resolve"
-import { inCommentOrString, moduleBinding, scanUseCalls, type UseImport } from "./scope"
+import {
+    inCommentOrString,
+    moduleBinding,
+    scanUseCalls,
+    type UseImport,
+} from "./scope"
 
-export type HintKind = "module" | "folder" | "name" | "wildcard"
+export type HintKind = "module" | "folder" | "name" | "function" | "data" | "wildcard"
 
 export interface Hint {
     label: string
     kind: HintKind
     detail?: string
+    call?: boolean
 }
 
 export interface HintRoots {
     currentDir: string
     balerDir: string
     libs?: string[]
+    data?: Record<string, string[]>
 }
 
 const memberAccess = /(?<![A-Za-z0-9._$@:`])(`[^`]+`|[A-Za-z.][A-Za-z0-9._]*)\$[A-Za-z0-9._]*$/
 const identifierAt = /(?<![A-Za-z0-9._$@:`])[A-Za-z.][A-Za-z0-9._]*$/
 
-function exportsOf(segments: string[], roots: HintRoots): string[] | null {
+interface ModuleNames {
+    names: string[]
+    kindOf: (name: string) => "function" | "data" | "name"
+}
+
+function exportsOf(segments: string[], roots: HintRoots): ModuleNames | null {
     const local = segments[0] === "." || segments[0] === ".."
     const base = local ? roots.currentDir : roots.balerDir
     const last = segments[segments.length - 1]
@@ -31,19 +43,63 @@ function exportsOf(segments: string[], roots: HintRoots): string[] | null {
     const file = findModuleFile([base], target)
     if (file !== null) {
         try {
-            return moduleExports(readFileSync(file, "utf8"))
+            const text = readFileSync(file, "utf8")
+            const functions = functionNames(text)
+            return {
+                names: moduleExports(text),
+                kindOf: (name) => (functions.has(name) ? "function" : "name"),
+            }
         } catch {
             return null
         }
     }
-    if (!local && segments.length === 1) {
-        return packageExports(roots.libs ?? [], segments[0])?.names ?? null
+    if (local || segments.length !== 1) {
+        return null
     }
-    return null
+    const info = packageExports(roots.libs ?? [], segments[0])
+    if (info === null) {
+        return null
+    }
+    const loaded = roots.data?.[segments[0]]
+    if (loaded === undefined) {
+        return { names: info.names, kindOf: () => "name" }
+    }
+    const data = new Set(loaded)
+    return {
+        names: [...new Set([...info.names, ...loaded])],
+        kindOf: (name) => (data.has(name) ? "data" : "function"),
+    }
+}
+
+/** Installed packages whose data index is needed to hint `before`. */
+export function packagesNeeded(before: string, roots: HintRoots): string[] {
+    const wanted = new Set<string>()
+    const context = findHintContext(before)
+    if (context === null) {
+        for (const entry of scanUseCalls(before).imports) {
+            wanted.add(entry.segments.length === 1 ? entry.segments[0] : "")
+        }
+    } else if (context.kind === "names") {
+        wanted.add(context.segments.length === 1 ? context.segments[0] : "")
+    }
+    const libs = roots.libs ?? []
+    return [...wanted].filter(
+        (name) =>
+            name !== "" &&
+            name !== "." &&
+            name !== ".." &&
+            findModuleFile([roots.balerDir], [name]) === null &&
+            findPackageDir(libs, name) !== null
+    )
 }
 
 function source(entry: UseImport): string {
     return entry.segments.join("/")
+}
+
+function usable(label: string, from: ModuleNames | null, detail: string, original = label): Hint {
+    const kind = from === null ? "name" : from.kindOf(original)
+    return kind === "function" ? { label, kind, detail, call: true } : { label, kind, detail }
 }
 
 function scopeHints(before: string, roots: HintRoots): Hint[] {
@@ -65,11 +121,8 @@ function scopeHints(before: string, roots: HintRoots): Hint[] {
         if (owner === undefined) {
             return []
         }
-        return (exportsOf(owner.segments, roots) ?? []).map((label) => ({
-            label,
-            kind: "name",
-            detail: source(owner),
-        }))
+        const owned = exportsOf(owner.segments, roots)
+        return (owned?.names ?? []).map((label) => usable(label, owned, source(owner)))
     }
     const visible = new Map<string, Hint>()
     for (const entry of scan.imports) {
@@ -77,16 +130,16 @@ function scopeHints(before: string, roots: HintRoots): Hint[] {
         if (module !== null) {
             visible.set(module, { label: module, kind: "module", detail: source(entry) })
         }
+        const known =
+            (entry.attached?.length ?? 0) > 0 || entry.wildcard
+                ? exportsOf(entry.segments, roots)
+                : null
         for (const attached of entry.attached ?? []) {
-            visible.set(attached.name, {
-                label: attached.name,
-                kind: "name",
-                detail: source(entry),
-            })
+            visible.set(attached.name, usable(attached.name, known, source(entry), attached.source))
         }
         if (entry.wildcard) {
-            for (const label of exportsOf(entry.segments, roots) ?? []) {
-                visible.set(label, { label, kind: "name", detail: source(entry) })
+            for (const label of known?.names ?? []) {
+                visible.set(label, usable(label, known, source(entry)))
             }
         }
     }
@@ -119,11 +172,11 @@ function importHints(context: HintContext, roots: HintRoots): Hint[] {
         return [...modules, ...packages]
     }
 
-    const names = exportsOf(segments, roots)
-    if (names === null) {
+    const found = exportsOf(segments, roots)
+    if (found === null) {
         return []
     }
-    const hints: Hint[] = names.map((name) => ({ label: name, kind: "name" }))
+    const hints: Hint[] = found.names.map((name) => ({ label: name, kind: found.kindOf(name) }))
     if (!context.lazy) {
         hints.push({ label: "...", kind: "wildcard" })
     }
