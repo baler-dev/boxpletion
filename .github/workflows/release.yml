@@ -24,6 +24,28 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package.json version $version"
             exit 1
           fi
+      - name: Write the release notes
+        run: |
+          sed 's/\r$//' CHANGELOG.md > changelog.tmp
+          if ! grep -qxF "# ${GITHUB_REF_NAME}" changelog.tmp; then
+              echo "CHANGELOG.md has no '# ${GITHUB_REF_NAME}' heading, add one before tagging"
+              exit 1
+          fi
+          anchor=$(printf '%s' "${GITHUB_REF_NAME}" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')
+          cat > release-body.md <<'EOF'
+          See what changed in this release in the [changelog](https://github.com/__REPO__/blob/__TAG__/CHANGELOG.md#__ANCHOR__).
+
+          ## Installation
+
+          It is not on a Marketplace listing yet, so install it from the `.vsix` below:
+
+          1. Download `boxpletion-__VERSION__.vsix` from the assets of this release.
+          2. In Positron or VS Code, press Ctrl+Shift+P (Cmd+Shift+P on a Mac) and run **Extensions: Install from VSIX...**
+          3. Select the downloaded file, and reload the window when it asks.
+
+          Completion for installed R packages needs `Rscript` on your `PATH`, or `boxpletion.rscriptPath` set to its full path.
+          EOF
+          sed -i -e "s|__REPO__|${GITHUB_REPOSITORY}|g" -e "s|__TAG__|${GITHUB_REF_NAME}|g" -e "s|__ANCHOR__|${anchor}|g" -e "s|__VERSION__|${GITHUB_REF_NAME#v}|g" release-body.md
       - run: npm ci
       - run: npm run lint
       - run: npm run unit
@@ -31,4 +53,5 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" ./*.vsix --title "boxpletion ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" ./*.vsix --title "boxpletion ${GITHUB_REF_NAME#v}" --notes-file release-body.md
+        
