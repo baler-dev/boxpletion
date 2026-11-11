@@ -170,15 +170,57 @@ export function moduleExports(source: string): string[] {
     return tagged.length > 0 ? tagged : topLevelNames(source)
 }
 
-const functionAssignment = /^([A-Za-z.][A-Za-z0-9._]*)\s*(?:<<-|<-|:=|=(?!=))\s*(?:function\b|\\\()/
+/**
+ * Calls known to return something callable, so `Person = new_class(...)` counts as a function.
+ * R6Class is left out on purpose: its generator is used through `$new()`.
+ */
+export const callableConstructors = [
+    "new_class",
+    "new_generic",
+    "setClass",
+    "Vectorize",
+    "Negate",
+    "partial",
+    "compose",
+]
 
-/** Names assigned a function at the top level, such as `add = function(x) x` or `f = \(x) x`. */
+const name = "[A-Za-z.][A-Za-z0-9._]*"
+const assigns = "\\s*(?:<<-|<-|:=|=(?!=))\\s*"
+const constructorCall = "(?:" + name + ":::?)?(?:" + callableConstructors.join("|") + ")\\s*\\("
+const functionAssignment = new RegExp(
+    "^(" + name + ")" + assigns + "(?:function\\b|\\\\\\(|" + constructorCall + ")"
+)
+const aliasAssignment = new RegExp(
+    "^(" + name + ")\\s*(?:<<-|<-|=(?!=))\\s*(" + name + ")\\s*(?:#.*)?$"
+)
+
+/**
+ * Names assigned a function at the top level, such as `add = function(x) x` or `f = \(x) x`,
+ * or the result of a call in `callableConstructors`. A name assigned another such name
+ * (`g = add`) is a function too.
+ */
 export function functionNames(source: string): Set<string> {
     const names = new Set<string>()
+    const aliases: [string, string][] = []
     for (const line of source.split(/\r?\n/)) {
         const match = functionAssignment.exec(line)
         if (match !== null) {
             names.add(match[1])
+            continue
+        }
+        const alias = aliasAssignment.exec(line)
+        if (alias !== null) {
+            aliases.push([alias[1], alias[2]])
+        }
+    }
+    let grew = true
+    while (grew) {
+        grew = false
+        for (const [name, target] of aliases) {
+            if (!names.has(name) && names.has(target)) {
+                names.add(name)
+                grew = true
+            }
         }
     }
     return names
