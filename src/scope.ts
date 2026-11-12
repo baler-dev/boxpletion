@@ -58,7 +58,7 @@ export function inCommentOrString(line: string): boolean {
     return quote !== null
 }
 
-function callEnd(text: string, start: number): number {
+export function callEnd(text: string, start: number): number {
     let depth = 1
     for (let i = start; i < text.length; i++) {
         const char = text[i]
@@ -85,7 +85,7 @@ function callEnd(text: string, start: number): number {
     return -1
 }
 
-function splitArgs(text: string): string[] {
+export function splitArgs(text: string): string[] {
     const parts: string[] = []
     let depth = 0
     let current = ""
