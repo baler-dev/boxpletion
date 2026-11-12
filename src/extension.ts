@@ -4,7 +4,8 @@ import { homedir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { loadPackageData } from "./data"
-import { hintsAt, packagesNeeded, type Hint } from "./hints"
+import { docMarkdown } from "./docs"
+import { hintsAt, packagesNeeded, signatureAt, type Hint } from "./hints"
 
 const itemKinds: Record<Hint["kind"], vscode.CompletionItemKind> = {
     module: vscode.CompletionItemKind.Module,
@@ -69,6 +70,14 @@ function loadLibs(): Promise<string[]> {
     return libsCache
 }
 
+function moduleRoots(document: vscode.TextDocument) {
+    const currentDir =
+        document.uri.scheme === "file"
+            ? dirname(document.uri.fsPath)
+            : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir())
+    return { currentDir, balerDir: join(homedir(), ".baler", "modules") }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
@@ -85,15 +94,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const before = document.getText(
                     new vscode.Range(new vscode.Position(0, 0), position)
                 )
-                const currentDir =
-                    document.uri.scheme === "file"
-                        ? dirname(document.uri.fsPath)
-                        : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir())
-                const roots = {
-                    currentDir,
-                    balerDir: join(homedir(), ".baler", "modules"),
-                    libs: await loadLibs(),
-                }
+                const roots = { ...moduleRoots(document), libs: await loadLibs() }
                 const data: Record<string, string[]> = {}
                 for (const name of packagesNeeded(before, roots)) {
                     const loaded = await loadData(name, roots.libs)
@@ -104,8 +105,22 @@ export function activate(context: vscode.ExtensionContext) {
                 const rest = document.lineAt(position.line).text.slice(position.character)
                 const calledAlready = /^[A-Za-z0-9._]*\(/.test(rest)
                 return hintsAt(before, { ...roots, data }).map((hint) => {
-                    const item = new vscode.CompletionItem(hint.label, itemKinds[hint.kind])
-                    item.detail = hint.detail
+                    const doc = hint.doc
+                    const item = new vscode.CompletionItem(
+                        doc === undefined
+                            ? hint.label
+                            : { label: hint.label, detail: doc.signature, description: hint.detail },
+                        itemKinds[hint.kind]
+                    )
+                    if (doc === undefined) {
+                        item.detail = hint.detail
+                    } else {
+                        item.detail = hint.label + doc.signature
+                        const markdown = docMarkdown(doc)
+                        if (markdown !== null) {
+                            item.documentation = new vscode.MarkdownString(markdown)
+                        }
+                    }
                     item.sortText = hint.kind === "wildcard" ? "zzz" : hint.label
                     if (isName(hint) && !plainName.test(hint.label)) {
                         item.insertText = "`" + hint.label + "`"
@@ -136,6 +151,43 @@ export function activate(context: vscode.ExtensionContext) {
         "$"
     )
     context.subscriptions.push(provider)
+    const signatures = vscode.languages.registerSignatureHelpProvider(
+        { language: "r" },
+        {
+            provideSignatureHelp(document, position) {
+                const before = document.getText(
+                    new vscode.Range(new vscode.Position(0, 0), position)
+                )
+                const info = signatureAt(before, moduleRoots(document))
+                if (info === null) {
+                    return undefined
+                }
+                const signature = new vscode.SignatureInformation(
+                    info.label,
+                    info.documentation === null
+                        ? undefined
+                        : new vscode.MarkdownString(info.documentation)
+                )
+                signature.parameters = info.parameters.map(
+                    (parameter) =>
+                        new vscode.ParameterInformation(
+                            parameter.range,
+                            parameter.documentation === null
+                                ? undefined
+                                : new vscode.MarkdownString(parameter.documentation)
+                        )
+                )
+                signature.activeParameter = info.active
+                const help = new vscode.SignatureHelp()
+                help.signatures = [signature]
+                help.activeSignature = 0
+                help.activeParameter = info.active
+                return help
+            },
+        },
+        { triggerCharacters: ["("], retriggerCharacters: [","] }
+    )
+    context.subscriptions.push(signatures)
 }
 
 export function deactivate() {}
