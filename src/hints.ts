@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { findHintContext, type HintContext } from "./context"
 import { findCall } from "./calls"
-import { moduleDocs, summaryMarkdown, type FunctionDoc } from "./docs"
+import { docMarkdown, moduleDocs, type FunctionDoc } from "./docs"
 import { functionNames, moduleExports, stripBackticks } from "./exports"
 import { findPackageDir, listPackages, packageExports } from "./packages"
 import { findModuleFile, listModules } from "./resolve"
@@ -377,7 +377,7 @@ export function signatureAt(before: string, roots: HintRoots): SignatureInfo | n
     })
     return {
         label: name + doc.signature,
-        documentation: summaryMarkdown(doc),
+        documentation: docMarkdown(doc),
         parameters,
         active,
     }

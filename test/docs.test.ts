@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { deepStrictEqual, strictEqual } from "node:assert"
-import { docMarkdown, moduleDocs, summaryMarkdown } from "../src/docs"
+import { docMarkdown, moduleDocs } from "../src/docs"
 
 const source = [
     "#' Add numbers",
@@ -86,6 +86,14 @@ test("markdown lists the described arguments only", () => {
     const markdown = docMarkdown(add!)
     strictEqual(markdown?.includes("- `y`: Others."), true)
     strictEqual(markdown?.includes("`...`"), false)
-    strictEqual(summaryMarkdown(add!), "**Add numbers**\n\nAdds `x` and `y` together.")
+    strictEqual(
+        markdown,
+        [
+            "**Add numbers**",
+            "Adds `x` and `y` together.",
+            "**Arguments**\n\n- `x`: The first number. It may be a vector.\n- `y`: Others.",
+            "**Returns**\n\nThe sum.",
+        ].join("\n\n")
+    )
     strictEqual(docMarkdown(moduleDocs(source).get("plain")!), null)
 })

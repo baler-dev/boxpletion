@@ -30,7 +30,10 @@ function roots(t: Parameters<typeof makeTree>[0]) {
 test("an attached function shows its signature, summary and parameters", (t) => {
     const info = signatureAt("box::use(./m[add])\nadd(", roots(t))
     strictEqual(info?.label, "add(x, y = 2, ...)")
-    strictEqual(info?.documentation, "**Add numbers**\n\nSums the inputs.")
+    strictEqual(
+        info?.documentation,
+        "**Add numbers**\n\nSums the inputs.\n\n**Arguments**\n\n- `x`: First.\n- `y`: Second."
+    )
     deepStrictEqual(info?.parameters, [
         { label: "x", range: [4, 5], documentation: "First." },
         { label: "y = 2", range: [7, 12], documentation: "Second." },

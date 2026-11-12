@@ -137,7 +137,7 @@ export function moduleDocs(source: string): Map<string, FunctionDoc> {
     return docs
 }
 
-/** Markdown for the documentation panel of a completion item. */
+/** Markdown for the documentation panel: title, description, every described argument, and the return value. */
 export function docMarkdown(doc: FunctionDoc): string | null {
     const parts: string[] = []
     if (doc.title !== null) {
@@ -156,11 +156,4 @@ export function docMarkdown(doc: FunctionDoc): string | null {
         parts.push("**Returns**\n\n" + doc.returns)
     }
     return parts.length === 0 ? null : parts.join("\n\n")
-}
-
-/** Markdown for the function itself in signature help, without the argument list. */
-export function summaryMarkdown(doc: FunctionDoc): string | null {
-    const parts = [doc.title === null ? null : "**" + doc.title + "**", doc.description]
-    const present = parts.filter((part): part is string => part !== null)
-    return present.length === 0 ? null : present.join("\n\n")
 }
