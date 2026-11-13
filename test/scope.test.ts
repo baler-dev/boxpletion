@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { deepStrictEqual } from "node:assert"
-import { moduleBinding, moduleReexports, scanUseCalls } from "../src/scope"
+import { moduleBinding, moduleReexports, moduleWildcards, scanUseCalls } from "../src/scope"
 
 function bound(text: string): (string | null)[] {
     return scanUseCalls(text).imports.map(moduleBinding)
@@ -50,4 +50,15 @@ test("moduleReexports lists tagged modules and attached names only", () => {
         { name: "run", segments: [".", "baz"], source: "run" },
         { name: "go", segments: [".", "baz"], source: "start" },
     ])
+})
+
+test("moduleWildcards lists only the tagged modules that are re-exported whole", () => {
+    const source = [
+        "#' @export",
+        "box::use(./a[...], ./b[run, ...])",
+        "box::use(./hidden[...])",
+        "#' @export",
+        "box::use(./c[one])",
+    ].join("\n")
+    deepStrictEqual(moduleWildcards(source), [[".", "a"], [".", "b"]])
 })
