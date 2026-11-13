@@ -5,6 +5,10 @@ export interface CallSite {
     commas: number
     /** The argument name being typed, as in `add(y = `, or null. */
     argName: string | null
+    /** The text of the argument being typed, without leading space. */
+    current: string
+    /** Names of the arguments already given by name, such as `y` in `f(y = 1, `. */
+    usedNames: string[]
 }
 
 interface Frame {
@@ -12,6 +16,7 @@ interface Frame {
     callee: string | null
     commas: number
     argStart: number
+    names: string[]
 }
 
 const identifier = "(?:`[^`]+`|[A-Za-z.][A-Za-z0-9._]*)"
@@ -48,11 +53,15 @@ export function findCall(before: string): CallSite | null {
             i = newline
         } else if (char === "(" || char === "[" || char === "{") {
             const callee = char === "(" ? (calleeAt.exec(before.slice(0, i))?.[1] ?? null) : null
-            stack.push({ open: char, callee, commas: 0, argStart: i + 1 })
+            stack.push({ open: char, callee, commas: 0, argStart: i + 1, names: [] })
         } else if (char === ")" || char === "]" || char === "}") {
             stack.pop()
         } else if (char === "," && stack.length > 0) {
             const top = stack[stack.length - 1]
+            const given = argNameAt.exec(before.slice(top.argStart, i))?.[1]
+            if (given !== undefined) {
+                top.names.push(given.replace(/`/g, ""))
+            }
             top.commas++
             top.argStart = i + 1
         }
@@ -61,10 +70,13 @@ export function findCall(before: string): CallSite | null {
     if (top === undefined || top.open !== "(" || top.callee === null) {
         return null
     }
-    const argName = argNameAt.exec(before.slice(top.argStart))?.[1] ?? null
+    const rest = before.slice(top.argStart)
+    const argName = argNameAt.exec(rest)?.[1] ?? null
     return {
         callee: top.callee,
         commas: top.commas,
         argName: argName === null ? null : argName.replace(/`/g, ""),
+        current: rest.trimStart(),
+        usedNames: top.names,
     }
 }
