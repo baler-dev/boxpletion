@@ -97,3 +97,19 @@ test("markdown lists the described arguments only", () => {
     )
     strictEqual(docMarkdown(moduleDocs(source).get("plain")!), null)
 })
+
+test("Rd markup in roxygen text becomes markdown", () => {
+    const docs = moduleDocs(
+        [
+            "#' Fit a \\emph{natural} spline",
+            "#'",
+            "#' See \\link{other} and \\href{https://x.org}{the site}, uses \\strong{two} knots.",
+            "#' @param y Same length as \\code{x}.",
+            "f = function(x, y) 1",
+        ].join("\n")
+    )
+    const f = docs.get("f")
+    strictEqual(f?.title, "Fit a *natural* spline")
+    strictEqual(f?.description, "See other and [the site](https://x.org), uses **two** knots.")
+    strictEqual(f?.args[1].doc, "Same length as `x`.")
+})

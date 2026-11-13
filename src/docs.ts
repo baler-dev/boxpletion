@@ -24,6 +24,20 @@ function squash(text: string): string {
     return text.replace(/\s+/g, " ").trim()
 }
 
+/** Turns the Rd markup that roxygen text may contain, such as \\code{x}, into markdown. */
+export function cleanRd(text: string): string {
+    let out = text
+    for (let pass = 0; pass < 3; pass++) {
+        out = out
+            .replace(/\\href\{([^{}]*)\}\{([^{}]*)\}/g, "[$2]($1)")
+            .replace(/\\(?:code|verb|samp|file|command|env|option|kbd)\{([^{}]*)\}/g, "`$1`")
+            .replace(/\\(?:emph|var|cite)\{([^{}]*)\}/g, "*$1*")
+            .replace(/\\strong\{([^{}]*)\}/g, "**$1**")
+            .replace(/\\(?:link|linkS4class|pkg|url|eqn|deqn|sQuote|dQuote|acronym|dfn)(?:\[[^\]]*\])?\{([^{}]*)\}/g, "$1")
+    }
+    return out
+}
+
 interface Roxygen {
     title: string | null
     description: string | null
@@ -47,14 +61,14 @@ function parseRoxygen(raw: string[]): Roxygen {
     const paragraphs = free
         .join("\n")
         .split(/\n\s*\n/)
-        .map(squash)
+        .map((paragraph) => cleanRd(squash(paragraph)))
         .filter((paragraph) => paragraph !== "")
     const params = new Map<string, string>()
     let title: string | null = paragraphs[0] ?? null
     let description: string | null = paragraphs.length > 1 ? paragraphs.slice(1).join("\n\n") : null
     let returns: string | null = null
     for (const { tag, text } of tags) {
-        const body = squash(text.join(" "))
+        const body = cleanRd(squash(text.join(" ")))
         if (tag === "param") {
             const match = /^(\S+)\s*(.*)$/.exec(body)
             for (const each of match?.[1].split(",") ?? []) {
