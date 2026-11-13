@@ -4,6 +4,28 @@ All notable changes to the "boxpletion" extension will be documented in this fil
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## Development Version
+
+### What's new
+
+Under new changes, the documentation and their parameter names (if exist) are exposed and can be completed. Here are more details: 
+
+-  The signature help for imported functions are exposed, when you type `name(` or something and see the arguments, with the current one highlighted.
+
+-  The documentation for imported functions are pre-rendered and exposed, just like when you type a function in Positron/VS code. Except, the title, the description, and each described argument and the returned value, are also showed, not just what they return (Positron is currently like this).
+
+   -  Functions from installed packages are documented from their help pages, read without loading the package.
+  
+   -  Rd markup in roxygen text, such as `\code{}`, `\emph{}` and `\link{}`, is shown as markdown.
+
+-  As from local modules and `box-bale` modules, the documentation through Roxygen2 comments above them are pre-rendered. Aliases such as `fn1 = fn` use the docs of `fn`.
+    
+   -  Names re-exported with a wildcard, as in `box::use(./a[...])` tagged with `@export`, are now completed through the module that re-exports them.
+
+-  Argument names inside a call are offered as `name = `, with their description.
+
+-  New setting `boxpletion.trace` logs completion and signature requests to the boxpletion output channel. It is off by default.
+
 ## v0.2.0
 
 ### What's new
