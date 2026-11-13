@@ -4,7 +4,8 @@ import { homedir } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { loadPackageData } from "./data"
-import { docMarkdown } from "./docs"
+import { loadPackageDocs } from "./rdocs"
+import { docMarkdown, type FunctionDoc } from "./docs"
 import { hintsAt, packagesNeeded, signatureAt, type Hint } from "./hints"
 
 const itemKinds: Record<Hint["kind"], vscode.CompletionItemKind> = {
@@ -15,6 +16,7 @@ const itemKinds: Record<Hint["kind"], vscode.CompletionItemKind> = {
     data: vscode.CompletionItemKind.Constant,
     namespace: vscode.CompletionItemKind.Module,
     wildcard: vscode.CompletionItemKind.Keyword,
+    argument: vscode.CompletionItemKind.Property,
 }
 
 function isName(hint: Hint): boolean {
@@ -28,6 +30,39 @@ const plainName = /^[A-Za-z.][A-Za-z0-9._]*$/
 const run = promisify(execFile)
 let libsCache: Promise<string[]> | null = null
 const dataCache = new Map<string, Promise<string[] | undefined>>()
+const docsCache = new Map<string, Promise<void>>()
+const docsReady: Record<string, Map<string, FunctionDoc>> = {}
+let output: vscode.OutputChannel | null = null
+
+function channel(): vscode.OutputChannel {
+    output ??= vscode.window.createOutputChannel("boxpletion")
+    return output
+}
+
+function log(message: string) {
+    channel().appendLine(new Date().toISOString().slice(11, 23) + " " + message)
+}
+
+function trace(message: string) {
+    if (vscode.workspace.getConfiguration("boxpletion").get<boolean>("trace", false)) {
+        log(message)
+    }
+}
+
+/** Failures are always logged, and shown once, because nothing else tells the user why docs are missing. */
+function report(name: string, problem: string, detail: string) {
+    log("docs: " + name + ": " + problem)
+    if (detail !== "") {
+        log("docs: " + name + ": output starts with:\n" + detail)
+    }
+    void vscode.window
+        .showWarningMessage("boxpletion: " + problem + " (" + name + ").", "Show log")
+        .then((choice) => {
+            if (choice === "Show log") {
+                channel().show()
+            }
+        })
+}
 
 function envLibs(): string[] {
     return [process.env.R_LIBS_USER, process.env.R_LIBS]
@@ -49,6 +84,35 @@ function loadData(name: string, libs: string[]): Promise<string[] | undefined> {
         dataCache.set(name, cached)
     }
     return cached
+}
+
+/** Starts reading a package's help pages in the background. It never blocks a request. */
+function warmDocs(name: string, libs: string[]) {
+    if (docsCache.has(name)) {
+        return
+    }
+    const config = vscode.workspace.getConfiguration("boxpletion")
+    const rscript = config.get<string>("rscriptPath", "Rscript")
+    trace("docs: loading help pages of " + name)
+    docsCache.set(
+        name,
+        loadPackageDocs(rscript, libs, name).then(
+            ({ docs, sample }) => {
+                if (docs.size === 0) {
+                    report(name, "no function docs could be read from the help pages", sample)
+                    return
+                }
+                docsReady[name] = docs
+                trace("docs: " + name + " ready, " + docs.size + " functions")
+                if (vscode.window.activeTextEditor?.document.languageId === "r") {
+                    void vscode.commands.executeCommand("editor.action.triggerParameterHints")
+                }
+            },
+            (error: unknown) => {
+                report(name, "could not read the help pages", String(error).slice(0, 1500))
+            }
+        )
+    )
 }
 
 function loadLibs(): Promise<string[]> {
@@ -84,13 +148,17 @@ export function activate(context: vscode.ExtensionContext) {
             if (event.affectsConfiguration("boxpletion.rscriptPath")) {
                 libsCache = null
                 dataCache.clear()
+                docsCache.clear()
+                for (const name of Object.keys(docsReady)) {
+                    delete docsReady[name]
+                }
             }
         })
     )
     const provider = vscode.languages.registerCompletionItemProvider(
         { language: "r" },
         {
-            async provideCompletionItems(document, position) {
+            async provideCompletionItems(document, position, _token, context) {
                 const before = document.getText(
                     new vscode.Range(new vscode.Position(0, 0), position)
                 )
@@ -102,9 +170,25 @@ export function activate(context: vscode.ExtensionContext) {
                         data[name] = loaded
                     }
                 }
+                for (const name of packagesNeeded(before, roots)) {
+                    warmDocs(name, roots.libs)
+                }
                 const rest = document.lineAt(position.line).text.slice(position.character)
                 const calledAlready = /^[A-Za-z0-9._]*\(/.test(rest)
-                return hintsAt(before, { ...roots, data }).map((hint) => {
+                const typedBracket =
+                    context.triggerKind === vscode.CompletionTriggerKind.TriggerCharacter &&
+                    (context.triggerCharacter === "(" || context.triggerCharacter === ",")
+                // Argument names are offered when asked for, or while typing a word, but do not
+                // pop up on their own after "(" or ",".
+                const hints = hintsAt(before, { ...roots, data, packageDocs: docsReady }).filter(
+                    (hint) => !(typedBracket && hint.kind === "argument")
+                )
+                trace(
+                    "completion: kind=" + context.triggerKind +
+                        " char=" + JSON.stringify(context.triggerCharacter ?? "") +
+                        " -> " + hints.length + " hints"
+                )
+                return hints.map((hint) => {
                     const doc = hint.doc
                     const item = new vscode.CompletionItem(
                         doc === undefined
@@ -122,6 +206,13 @@ export function activate(context: vscode.ExtensionContext) {
                         }
                     }
                     item.sortText = hint.kind === "wildcard" ? "zzz" : hint.label
+                    if (hint.kind === "argument") {
+                        item.insertText = hint.label + " = "
+                        item.sortText = "0" + String(hint.order ?? 0).padStart(3, "0")
+                        if (hint.documentation !== undefined) {
+                            item.documentation = new vscode.MarkdownString(hint.documentation)
+                        }
+                    }
                     if (isName(hint) && !plainName.test(hint.label)) {
                         item.insertText = "`" + hint.label + "`"
                         item.filterText = hint.label
@@ -154,11 +245,20 @@ export function activate(context: vscode.ExtensionContext) {
     const signatures = vscode.languages.registerSignatureHelpProvider(
         { language: "r" },
         {
-            provideSignatureHelp(document, position) {
+            async provideSignatureHelp(document, position, _token, context) {
                 const before = document.getText(
                     new vscode.Range(new vscode.Position(0, 0), position)
                 )
-                const info = signatureAt(before, moduleRoots(document))
+                const roots = { ...moduleRoots(document), libs: await loadLibs() }
+                for (const name of packagesNeeded(before, roots)) {
+                    warmDocs(name, roots.libs)
+                }
+                const info = signatureAt(before, { ...roots, packageDocs: docsReady })
+                trace(
+                    "signature: kind=" + context.triggerKind +
+                        " retrigger=" + context.isRetrigger +
+                        " -> " + (info === null ? "none" : info.label + " active=" + info.active)
+                )
                 if (info === null) {
                     return undefined
                 }
