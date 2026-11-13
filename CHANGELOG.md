@@ -20,7 +20,7 @@ Under new changes, the documentation and their parameter names (if exist) are ex
 
 -  As from local modules and `box-bale` modules, the documentation through Roxygen2 comments above them are pre-rendered. Aliases such as `fn1 = fn` use the docs of `fn`.
     
-   -  Names re-exported with a wildcard, as in `box::use(./a[...])` tagged with `@export`, are now completed through the module that re-exports them.
+   -  Names re-exported with a wildcard, as in `box::use(./a[...])` tagged with `@export`, are now completed through the module that re-exports them (#8).
 
 -  Argument names inside a call are offered as `name = `, with their description.
 
