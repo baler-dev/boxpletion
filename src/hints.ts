@@ -22,6 +22,7 @@ export type HintKind =
     | "data"
     | "namespace"
     | "wildcard"
+    | "argument"
 
 export interface Hint {
     label: string
@@ -29,6 +30,10 @@ export interface Hint {
     detail?: string
     call?: boolean
     doc?: FunctionDoc
+    /** Markdown for a hint that is not a function, such as an argument's description. */
+    documentation?: string
+    /** Position among the arguments of the function, for sorting. */
+    order?: number
 }
 
 export interface HintRoots {
@@ -36,6 +41,8 @@ export interface HintRoots {
     balerDir: string
     libs?: string[]
     data?: Record<string, string[]>
+    /** Docs of installed packages that have finished loading, by package name. */
+    packageDocs?: Record<string, Map<string, FunctionDoc>>
 }
 
 const identifier = "(?:`[^`]+`|[A-Za-z.][A-Za-z0-9._]*)"
@@ -138,14 +145,21 @@ function exportsOf(
     }
     const loaded = roots.data?.[segments[0]]
     if (loaded === undefined) {
-        return { names: info.names, kindOf: () => "name", submodule: () => null, docOf: () => null }
+        const docs = roots.packageDocs?.[segments[0]]
+        return {
+            names: info.names,
+            kindOf: () => "name",
+            submodule: () => null,
+            docOf: (name) => docs?.get(name) ?? null,
+        }
     }
     const data = new Set(loaded)
+    const packageDocs = roots.packageDocs?.[segments[0]]
     return {
         names: [...new Set([...info.names, ...loaded])],
         kindOf: (name) => (data.has(name) ? "data" : "function"),
         submodule: () => null,
-        docOf: () => null,
+        docOf: (name) => packageDocs?.get(name) ?? null,
     }
 }
 
@@ -282,7 +296,10 @@ function scopeHints(before: string, roots: HintRoots): Hint[] {
 
 export function hintsAt(before: string, roots: HintRoots): Hint[] {
     const context = findHintContext(before)
-    return context === null ? scopeHints(before, roots) : importHints(context, roots)
+    if (context !== null) {
+        return importHints(context, roots)
+    }
+    return [...scopeHints(before, roots), ...argumentHints(before, roots)]
 }
 
 function importHints(context: HintContext, roots: HintRoots): Hint[] {
@@ -381,4 +398,38 @@ export function signatureAt(before: string, roots: HintRoots): SignatureInfo | n
         parameters,
         active,
     }
+}
+
+const argumentSlot = /^(?:[A-Za-z.][A-Za-z0-9._]*)?$/
+
+/** The argument names of the function being called, such as `y` for `f(|`, as `y = `. */
+function argumentHints(before: string, roots: HintRoots): Hint[] {
+    const line = before.slice(before.lastIndexOf("\n") + 1)
+    if (inCommentOrString(line)) {
+        return []
+    }
+    const call = findCall(before)
+    if (call === null || !argumentSlot.test(call.current)) {
+        return []
+    }
+    const scan = scanUseCalls(before)
+    if (scan.open) {
+        return []
+    }
+    const doc = docOfCallee(call.callee, scan.imports, roots)
+    if (doc === null) {
+        return []
+    }
+    const hints: Hint[] = []
+    doc.args.forEach((arg, order) => {
+        if (arg.name === "..." || call.usedNames.includes(arg.name)) {
+            return
+        }
+        const hint: Hint = { label: arg.name, kind: "argument", detail: arg.label, order }
+        if (arg.doc !== null && arg.doc !== "") {
+            hint.documentation = arg.doc
+        }
+        hints.push(hint)
+    })
+    return hints
 }
