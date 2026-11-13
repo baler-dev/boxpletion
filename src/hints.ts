@@ -3,13 +3,20 @@ import { dirname, join } from "node:path"
 import { findHintContext, type HintContext } from "./context"
 import { findCall } from "./calls"
 import { docMarkdown, moduleDocs, type FunctionDoc } from "./docs"
-import { functionNames, moduleExports, stripBackticks } from "./exports"
+import {
+    declaredExports,
+    exportedNames,
+    functionNames,
+    moduleExports,
+    stripBackticks,
+} from "./exports"
 import { findPackageDir, listPackages, packageExports } from "./packages"
 import { findModuleFile, listModules } from "./resolve"
 import {
     inCommentOrString,
     moduleBinding,
     moduleReexports,
+    moduleWildcards,
     scanUseCalls,
     type UseImport,
 } from "./scope"
@@ -74,7 +81,8 @@ function exportsOf(
     segments: string[],
     roots: HintRoots,
     dir?: string,
-    depth = 0
+    depth = 0,
+    visiting: string[] = []
 ): ModuleNames | null {
     if (depth > maxDepth) {
         return null
@@ -85,22 +93,45 @@ function exportsOf(
     const target = last === "." || last === ".." ? [...segments, "__init__"] : segments
     const file = findModuleFile([base], target)
     if (file !== null) {
+        if (visiting.includes(file)) {
+            return null
+        }
         try {
             const text = readFileSync(file, "utf8")
             const functions = functionNames(text)
             const reexports = moduleReexports(text)
             const docs = moduleDocs(text)
             const here = dirname(file)
+            // A wildcard only counts when exports come from tags, not from box::export().
+            const wildcards =
+                declaredExports(text) === null
+                    ? moduleWildcards(text)
+                          .map((target) => ({
+                              target,
+                              from: exportsOf(target, roots, here, depth + 1, [...visiting, file]),
+                          }))
+                          .reverse()
+                    : []
+            const own = new Set(wildcards.length > 0 ? exportedNames(text) : moduleExports(text))
             const follow = (name: string) => {
                 const reexport = reexports.get(name)
-                if (reexport === undefined) {
+                if (reexport !== undefined) {
+                    const from = exportsOf(reexport.segments, roots, here, depth + 1)
+                    return { reexport, from }
+                }
+                if (own.has(name)) {
                     return null
                 }
-                const from = exportsOf(reexport.segments, roots, here, depth + 1)
-                return { reexport, from }
+                // The module imported last wins, as in box.
+                for (const { target, from } of wildcards) {
+                    if (from?.names.includes(name)) {
+                        return { reexport: { name, segments: target, source: name }, from }
+                    }
+                }
+                return null
             }
             return {
-                names: moduleExports(text),
+                names: [...new Set([...own, ...wildcards.flatMap(({ from }) => from?.names ?? [])])],
                 kindOf: (name) => {
                     const followed = follow(name)
                     if (followed === null) {
