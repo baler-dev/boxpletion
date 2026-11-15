@@ -92,12 +92,14 @@ test("local functions ask for a call, local values do not", (t) => {
         balerDir: makeTree(t, {}),
         currentDir: makeTree(t, { "m.r": "#' @export\nf = function(x) x\n#' @export\nk = 1" }),
     }
-    deepStrictEqual(hintsAt("box::use(./m)\nm$", roots), [
-        { label: "f", kind: "function", detail: "./m", call: true },
-        { label: "k", kind: "name", detail: "./m" },
-    ])
+    deepStrictEqual(
+        hintsAt("box::use(./m)\nm$", roots).map((hint) => [hint.label, hint.kind, hint.call === true]),
+        [
+            ["f", "function", true],
+            ["k", "name", false],
+        ]
+    )
 })
-
 test("only installed packages without a baler module need a data index", (t) => {
     const roots = withPackage(t)
     deepStrictEqual(packagesNeeded("box::use(dplyr, ./m, nope)\nx", roots), ["dplyr"])
@@ -182,4 +184,51 @@ test("modules that re-export each other do not loop", (t) => {
     }
     deepStrictEqual(summary(hintsAt("box::use(./a[x])\nx", roots)), [["x", "name", false]])
     deepStrictEqual(hintsAt("box::use(./a[x])\nx$", roots), [])
+})
+
+const documented = [
+    "#' Add numbers",
+    "#'",
+    "#' @param x First.",
+    "#' @export",
+    "add = function(x, y = 2) x + y",
+    "#' @export",
+    "plain = function() NULL",
+    "#' @export",
+    "value = 1",
+].join("\n")
+
+function docRoots(t: Parameters<typeof makeTree>[0]) {
+    return {
+        balerDir: makeTree(t, {}),
+        currentDir: makeTree(t, {
+            "m.r": documented,
+            "pkg/__init__.r": "#' @export\nbox::use(./inner[add])\n#' @export\nbox::use(./inner)",
+            "pkg/inner.r": documented,
+        }),
+    }
+}
+
+function docOf(hints: { label: string; doc?: { signature: string; title: string | null } }[], label: string) {
+    const doc = hints.find((hint) => hint.label === label)?.doc
+    return doc === undefined ? undefined : [doc.signature, doc.title]
+}
+
+test("module$ hints carry signature and title; values carry none", (t) => {
+    const hints = hintsAt("box::use(./m)\nm$", docRoots(t))
+    deepStrictEqual(docOf(hints, "add"), ["(x, y = 2)", "Add numbers"])
+    deepStrictEqual(docOf(hints, "plain"), ["()", null])
+    deepStrictEqual(docOf(hints, "value"), undefined)
+})
+
+test("attached names and the bracket list carry docs too", (t) => {
+    const roots = docRoots(t)
+    deepStrictEqual(docOf(hintsAt("box::use(./m[add])\nad", roots), "add"), ["(x, y = 2)", "Add numbers"])
+    deepStrictEqual(docOf(hintsAt("box::use(./m[", roots), "add"), ["(x, y = 2)", "Add numbers"])
+})
+
+test("docs follow a re-exported function and are absent for a re-exported module", (t) => {
+    const hints = hintsAt("box::use(./pkg)\npkg$", docRoots(t))
+    deepStrictEqual(docOf(hints, "add"), ["(x, y = 2)", "Add numbers"])
+    deepStrictEqual(docOf(hints, "inner"), undefined)
 })

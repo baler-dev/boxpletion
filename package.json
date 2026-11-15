@@ -17,6 +17,11 @@
     "configuration": {
       "title": "boxpletion",
       "properties": {
+        "boxpletion.trace": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log completion and signature help requests to the boxpletion output channel."
+        },
         "boxpletion.rscriptPath": {
           "type": "string",
           "default": "Rscript",

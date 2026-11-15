@@ -142,7 +142,7 @@ export function topLevelNames(source: string): string[] {
     return [...names]
 }
 
-function declaredExports(source: string): string[] | null {
+export function declaredExports(source: string): string[] | null {
     const code = source
         .split(/\r?\n/)
         .filter((line) => !line.trim().startsWith("#"))

@@ -1,13 +1,22 @@
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { findHintContext, type HintContext } from "./context"
-import { functionNames, moduleExports, stripBackticks } from "./exports"
+import { findCall } from "./calls"
+import { docMarkdown, moduleDocs, type FunctionDoc } from "./docs"
+import {
+    declaredExports,
+    exportedNames,
+    functionNames,
+    moduleExports,
+    stripBackticks,
+} from "./exports"
 import { findPackageDir, listPackages, packageExports } from "./packages"
 import { findModuleFile, listModules } from "./resolve"
 import {
     inCommentOrString,
     moduleBinding,
     moduleReexports,
+    moduleWildcards,
     scanUseCalls,
     type UseImport,
 } from "./scope"
@@ -20,12 +29,18 @@ export type HintKind =
     | "data"
     | "namespace"
     | "wildcard"
+    | "argument"
 
 export interface Hint {
     label: string
     kind: HintKind
     detail?: string
     call?: boolean
+    doc?: FunctionDoc
+    /** Markdown for a hint that is not a function, such as an argument's description. */
+    documentation?: string
+    /** Position among the arguments of the function, for sorting. */
+    order?: number
 }
 
 export interface HintRoots {
@@ -33,6 +48,8 @@ export interface HintRoots {
     balerDir: string
     libs?: string[]
     data?: Record<string, string[]>
+    /** Docs of installed packages that have finished loading, by package name. */
+    packageDocs?: Record<string, Map<string, FunctionDoc>>
 }
 
 const identifier = "(?:`[^`]+`|[A-Za-z.][A-Za-z0-9._]*)"
@@ -54,6 +71,8 @@ interface ModuleNames {
     kindOf: (name: string) => NameKind
     /** Where an exported name that is itself a module lives, if it is one. */
     submodule: (name: string) => Target | null
+    /** The signature and roxygen docs of an exported function, when known. */
+    docOf: (name: string) => FunctionDoc | null
 }
 
 const maxDepth = 8
@@ -62,7 +81,8 @@ function exportsOf(
     segments: string[],
     roots: HintRoots,
     dir?: string,
-    depth = 0
+    depth = 0,
+    visiting: string[] = []
 ): ModuleNames | null {
     if (depth > maxDepth) {
         return null
@@ -73,21 +93,45 @@ function exportsOf(
     const target = last === "." || last === ".." ? [...segments, "__init__"] : segments
     const file = findModuleFile([base], target)
     if (file !== null) {
+        if (visiting.includes(file)) {
+            return null
+        }
         try {
             const text = readFileSync(file, "utf8")
             const functions = functionNames(text)
             const reexports = moduleReexports(text)
+            const docs = moduleDocs(text)
             const here = dirname(file)
+            // A wildcard only counts when exports come from tags, not from box::export().
+            const wildcards =
+                declaredExports(text) === null
+                    ? moduleWildcards(text)
+                          .map((target) => ({
+                              target,
+                              from: exportsOf(target, roots, here, depth + 1, [...visiting, file]),
+                          }))
+                          .reverse()
+                    : []
+            const own = new Set(wildcards.length > 0 ? exportedNames(text) : moduleExports(text))
             const follow = (name: string) => {
                 const reexport = reexports.get(name)
-                if (reexport === undefined) {
+                if (reexport !== undefined) {
+                    const from = exportsOf(reexport.segments, roots, here, depth + 1)
+                    return { reexport, from }
+                }
+                if (own.has(name)) {
                     return null
                 }
-                const from = exportsOf(reexport.segments, roots, here, depth + 1)
-                return { reexport, from }
+                // The module imported last wins, as in box.
+                for (const { target, from } of wildcards) {
+                    if (from?.names.includes(name)) {
+                        return { reexport: { name, segments: target, source: name }, from }
+                    }
+                }
+                return null
             }
             return {
-                names: moduleExports(text),
+                names: [...new Set([...own, ...wildcards.flatMap(({ from }) => from?.names ?? [])])],
                 kindOf: (name) => {
                     const followed = follow(name)
                     if (followed === null) {
@@ -97,6 +141,16 @@ function exportsOf(
                         return "namespace"
                     }
                     return followed.from?.kindOf(followed.reexport.source) ?? "name"
+                },
+                docOf: (name) => {
+                    const followed = follow(name)
+                    if (followed === null) {
+                        return docs.get(name) ?? null
+                    }
+                    if (followed.reexport.source === null) {
+                        return null
+                    }
+                    return followed.from?.docOf(followed.reexport.source) ?? null
                 },
                 submodule: (name) => {
                     const followed = follow(name)
@@ -122,13 +176,21 @@ function exportsOf(
     }
     const loaded = roots.data?.[segments[0]]
     if (loaded === undefined) {
-        return { names: info.names, kindOf: () => "name", submodule: () => null }
+        const docs = roots.packageDocs?.[segments[0]]
+        return {
+            names: info.names,
+            kindOf: () => "name",
+            submodule: () => null,
+            docOf: (name) => docs?.get(name) ?? null,
+        }
     }
     const data = new Set(loaded)
+    const packageDocs = roots.packageDocs?.[segments[0]]
     return {
         names: [...new Set([...info.names, ...loaded])],
         kindOf: (name) => (data.has(name) ? "data" : "function"),
         submodule: () => null,
+        docOf: (name) => packageDocs?.get(name) ?? null,
     }
 }
 
@@ -158,30 +220,62 @@ function source(entry: UseImport): string {
     return entry.segments.join("/")
 }
 
-/** The module that `name` refers to after the given imports, or null if it is not a module. */
-function bindingTarget(name: string, imports: UseImport[], roots: HintRoots): Target | null {
-    let found: Target | null = null
+type Binding =
+    | { kind: "module"; entry: UseImport }
+    | { kind: "attached"; info: ModuleNames | null; source: string }
+
+/** What `name` is bound to after the given imports. A later import wins. */
+function resolveName(name: string, imports: UseImport[], roots: HintRoots): Binding | null {
+    let found: Binding | null = null
     for (const entry of imports) {
         if (moduleBinding(entry) === name) {
-            found = { segments: entry.segments }
+            found = { kind: "module", entry }
         }
         const attaches = (entry.attached?.length ?? 0) > 0 || entry.wildcard
         const info = attaches ? exportsOf(entry.segments, roots) : null
         for (const attached of entry.attached ?? []) {
             if (attached.name === name) {
-                found = info?.submodule(attached.source) ?? null
+                found = { kind: "attached", info, source: attached.source }
             }
         }
         if (entry.wildcard && info?.names.includes(name)) {
-            found = info.submodule(name)
+            found = { kind: "attached", info, source: name }
         }
     }
     return found
 }
 
+/** The module that `name` refers to after the given imports, or null if it is not a module. */
+function bindingTarget(name: string, imports: UseImport[], roots: HintRoots): Target | null {
+    const found = resolveName(name, imports, roots)
+    if (found === null) {
+        return null
+    }
+    return found.kind === "module"
+        ? { segments: found.entry.segments }
+        : (found.info?.submodule(found.source) ?? null)
+}
+
+/** The module a chain such as `foo$bar` refers to. */
+function chainTarget(parts: string[], imports: UseImport[], roots: HintRoots): Target | null {
+    let target = bindingTarget(parts[0], imports, roots)
+    for (const part of parts.slice(1)) {
+        target =
+            target === null
+                ? null
+                : (exportsOf(target.segments, roots, target.dir)?.submodule(part) ?? null)
+    }
+    return target
+}
+
 function usable(label: string, from: ModuleNames | null, detail: string, original = label): Hint {
     const kind = from === null ? "name" : from.kindOf(original)
-    return kind === "function" ? { label, kind, detail, call: true } : { label, kind, detail }
+    const doc = from?.docOf(original) ?? null
+    const hint: Hint = kind === "function" ? { label, kind, detail, call: true } : { label, kind, detail }
+    if (doc !== null) {
+        hint.doc = doc
+    }
+    return hint
 }
 
 function scopeHints(before: string, roots: HintRoots): Hint[] {
@@ -201,13 +295,7 @@ function scopeHints(before: string, roots: HintRoots): Hint[] {
         const parts = [...member[1].matchAll(identifierParts)].map((part) =>
             stripBackticks(part[0])
         )
-        let target = bindingTarget(parts[0], scan.imports, roots)
-        for (const part of parts.slice(1)) {
-            target =
-                target === null
-                    ? null
-                    : (exportsOf(target.segments, roots, target.dir)?.submodule(part) ?? null)
-        }
+        const target = chainTarget(parts, scan.imports, roots)
         if (target === null) {
             return []
         }
@@ -239,7 +327,10 @@ function scopeHints(before: string, roots: HintRoots): Hint[] {
 
 export function hintsAt(before: string, roots: HintRoots): Hint[] {
     const context = findHintContext(before)
-    return context === null ? scopeHints(before, roots) : importHints(context, roots)
+    if (context !== null) {
+        return importHints(context, roots)
+    }
+    return [...scopeHints(before, roots), ...argumentHints(before, roots)]
 }
 
 function importHints(context: HintContext, roots: HintRoots): Hint[] {
@@ -267,9 +358,109 @@ function importHints(context: HintContext, roots: HintRoots): Hint[] {
     if (found === null) {
         return []
     }
-    const hints: Hint[] = found.names.map((name) => ({ label: name, kind: found.kindOf(name) }))
+    const hints: Hint[] = found.names.map((name) => {
+        const hint: Hint = { label: name, kind: found.kindOf(name) }
+        const doc = found.docOf(name)
+        if (doc !== null) {
+            hint.doc = doc
+        }
+        return hint
+    })
     if (!context.lazy) {
         hints.push({ label: "...", kind: "wildcard" })
     }
+    return hints
+}
+
+export interface SignatureInfo {
+    label: string
+    documentation: string | null
+    /** `range` is the parameter's [start, end) offsets inside `label`. */
+    parameters: { label: string; range: [number, number]; documentation: string | null }[]
+    /** Index of the parameter being typed; past the end when none applies. */
+    active: number
+}
+
+function docOfCallee(callee: string, imports: UseImport[], roots: HintRoots): FunctionDoc | null {
+    const parts = [...callee.matchAll(identifierParts)].map((part) => stripBackticks(part[0]))
+    if (parts.length === 1) {
+        const found = resolveName(parts[0], imports, roots)
+        return found?.kind === "attached" ? (found.info?.docOf(found.source) ?? null) : null
+    }
+    const target = chainTarget(parts.slice(0, -1), imports, roots)
+    return target === null
+        ? null
+        : (exportsOf(target.segments, roots, target.dir)?.docOf(parts[parts.length - 1]) ?? null)
+}
+
+/** The signature to show while typing a call to an imported function, or null if unknown. */
+export function signatureAt(before: string, roots: HintRoots): SignatureInfo | null {
+    const line = before.slice(before.lastIndexOf("\n") + 1)
+    if (inCommentOrString(line)) {
+        return null
+    }
+    const call = findCall(before)
+    if (call === null) {
+        return null
+    }
+    const scan = scanUseCalls(before)
+    if (scan.open) {
+        return null
+    }
+    const doc = docOfCallee(call.callee, scan.imports, roots)
+    if (doc === null) {
+        return null
+    }
+    const dots = doc.args.findIndex((arg) => arg.name === "...")
+    let active = call.argName === null ? call.commas : doc.args.findIndex((arg) => arg.name === call.argName)
+    if (active === -1 || (call.argName === null && dots !== -1 && active >= dots)) {
+        active = dots === -1 ? doc.args.length : dots
+    }
+    const name = [...call.callee.matchAll(identifierParts)].map((part) => part[0]).pop() ?? call.callee
+    let position = name.length + 1
+    const parameters = doc.args.map((arg) => {
+        const range: [number, number] = [position, position + arg.label.length]
+        position = range[1] + 2
+        return { label: arg.label, range, documentation: arg.doc }
+    })
+    return {
+        label: name + doc.signature,
+        documentation: docMarkdown(doc),
+        parameters,
+        active,
+    }
+}
+
+const argumentSlot = /^(?:[A-Za-z.][A-Za-z0-9._]*)?$/
+
+/** The argument names of the function being called, such as `y` for `f(|`, as `y = `. */
+function argumentHints(before: string, roots: HintRoots): Hint[] {
+    const line = before.slice(before.lastIndexOf("\n") + 1)
+    if (inCommentOrString(line)) {
+        return []
+    }
+    const call = findCall(before)
+    if (call === null || !argumentSlot.test(call.current)) {
+        return []
+    }
+    const scan = scanUseCalls(before)
+    if (scan.open) {
+        return []
+    }
+    const doc = docOfCallee(call.callee, scan.imports, roots)
+    if (doc === null) {
+        return []
+    }
+    const hints: Hint[] = []
+    doc.args.forEach((arg, order) => {
+        if (arg.name === "..." || call.usedNames.includes(arg.name)) {
+            return
+        }
+        const hint: Hint = { label: arg.name, kind: "argument", detail: arg.label, order }
+        if (arg.doc !== null && arg.doc !== "") {
+            hint.documentation = arg.doc
+        }
+        hints.push(hint)
+    })
     return hints
 }

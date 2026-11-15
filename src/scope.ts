@@ -58,7 +58,7 @@ export function inCommentOrString(line: string): boolean {
     return quote !== null
 }
 
-function callEnd(text: string, start: number): number {
+export function callEnd(text: string, start: number): number {
     let depth = 1
     for (let i = start; i < text.length; i++) {
         const char = text[i]
@@ -85,7 +85,7 @@ function callEnd(text: string, start: number): number {
     return -1
 }
 
-function splitArgs(text: string): string[] {
+export function splitArgs(text: string): string[] {
     const parts: string[] = []
     let depth = 0
     let current = ""
@@ -241,9 +241,8 @@ export interface Reexport {
 
 const exportTag = /^#'\s*@export(\s|$)/
 
-/** What a module re-exports through a tagged `box::use()`, keyed by the exported name. */
-export function moduleReexports(source: string): Map<string, Reexport> {
-    const found = new Map<string, Reexport>()
+function taggedUses(source: string): UseImport[] {
+    const found: UseImport[] = []
     let tagged = false
     let offset = 0
     for (const raw of source.split("\n")) {
@@ -259,21 +258,37 @@ export function moduleReexports(source: string): Map<string, Reexport> {
             continue
         }
         if (tagged && line.startsWith(useCall)) {
-            for (const entry of readCall(source, lineStart)?.imports ?? []) {
-                const module = moduleBinding(entry)
-                if (module !== null) {
-                    found.set(module, { name: module, segments: entry.segments, source: null })
-                }
-                for (const attached of entry.attached ?? []) {
-                    found.set(attached.name, {
-                        name: attached.name,
-                        segments: entry.segments,
-                        source: attached.source,
-                    })
-                }
-            }
+            found.push(...(readCall(source, lineStart)?.imports ?? []))
         }
         tagged = false
     }
     return found
+}
+
+/** What a module re-exports through a tagged `box::use()`, keyed by the exported name. */
+export function moduleReexports(source: string): Map<string, Reexport> {
+    const found = new Map<string, Reexport>()
+    for (const entry of taggedUses(source)) {
+        const module = moduleBinding(entry)
+        if (module !== null) {
+            found.set(module, { name: module, segments: entry.segments, source: null })
+        }
+        for (const attached of entry.attached ?? []) {
+            found.set(attached.name, {
+                name: attached.name,
+                segments: entry.segments,
+                source: attached.source,
+            })
+        }
+    }
+    return found
+}
+
+/** 
+The modules a module re-exports whole, through a tagged `box::use(./foo[...])`, in order. 
+*/
+export function moduleWildcards(source: string): string[][] {
+    return taggedUses(source)
+        .filter((entry) => entry.wildcard)
+        .map((entry) => entry.segments)
 }
