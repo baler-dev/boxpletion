@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## Development Version
 
+## v0.3.0
+
 ### What's new
 
 Under new changes, the documentation and their parameter names (if exist) are exposed and can be completed. Here are more details: 
