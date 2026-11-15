@@ -27,8 +27,8 @@ jobs:
       - name: Write the release notes
         run: |
           sed 's/\r$//' CHANGELOG.md > changelog.tmp
-          if ! grep -qxF "# ${GITHUB_REF_NAME}" changelog.tmp; then
-              echo "CHANGELOG.md has no '# ${GITHUB_REF_NAME}' heading, add one before tagging"
+          if ! grep -qxF "## ${GITHUB_REF_NAME}" changelog.tmp; then
+              echo "CHANGELOG.md has no '## ${GITHUB_REF_NAME}' heading, add one before tagging"
               exit 1
           fi
           anchor=$(printf '%s' "${GITHUB_REF_NAME}" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')
