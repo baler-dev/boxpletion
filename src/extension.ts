@@ -207,6 +207,8 @@ export function activate(context: vscode.ExtensionContext) {
                     }
                     item.sortText = hint.kind === "wildcard" ? "zzz" : hint.label
                     if (hint.kind === "argument") {
+                        item.label = hint.label + " ="
+                        item.filterText = hint.label
                         item.insertText = hint.label + " = "
                         item.sortText = "0" + String(hint.order ?? 0).padStart(3, "0")
                         if (hint.documentation !== undefined) {
